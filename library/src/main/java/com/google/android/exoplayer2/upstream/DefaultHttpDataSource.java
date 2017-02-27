@@ -18,10 +18,12 @@ package com.google.android.exoplayer2.upstream;
 import android.net.Uri;
 import android.text.TextUtils;
 import android.util.Log;
+
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Predicate;
 import com.google.android.exoplayer2.util.Util;
+
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -35,6 +37,7 @@ import java.net.URL;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Scanner;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -83,6 +86,9 @@ public class DefaultHttpDataSource implements HttpDataSource {
 
   private long bytesSkipped;
   private long bytesRead;
+
+  static final String UPLYNK_PREFIX_HEADER = "X-Uplynk-Prefix";
+  static private String uplynkPrefix;
 
   /**
    * @param userAgent The User-Agent string that should be used.
@@ -193,7 +199,7 @@ public class DefaultHttpDataSource implements HttpDataSource {
       connection = makeConnection(dataSpec);
     } catch (IOException e) {
       throw new HttpDataSourceException("Unable to connect to " + dataSpec.uri.toString(), e,
-          dataSpec, HttpDataSourceException.TYPE_OPEN);
+              dataSpec, HttpDataSourceException.TYPE_OPEN);
     }
 
     int responseCode;
@@ -202,7 +208,26 @@ public class DefaultHttpDataSource implements HttpDataSource {
     } catch (IOException e) {
       closeConnectionQuietly();
       throw new HttpDataSourceException("Unable to connect to " + dataSpec.uri.toString(), e,
-          dataSpec, HttpDataSourceException.TYPE_OPEN);
+              dataSpec, HttpDataSourceException.TYPE_OPEN);
+    }
+
+    // UPLYNK -- check error text returned
+    try {
+      String server = dataSpec.uri.toString();
+      if (server.endsWith("uplynk.com/wv") && uplynkPrefix != null) {
+        server = uplynkPrefix + "/wv";
+      }
+      if (dataSpec.uri.toString().endsWith("uplynk.com/wv"))
+        Log.e(TAG, "CHAD open()'d: " + server + " got response " + Integer.toString(responseCode));
+
+      if (responseCode >= 400) {
+        InputStream inputStream = connection.getErrorStream();
+        Scanner s = new Scanner(inputStream).useDelimiter("\\A");
+        String result = s.hasNext() ? s.next() : "";
+        Log.e(TAG, "CHAD Error POSTing to : " + server + " " + connection.getResponseCode() + " with error: " + result);
+      }
+    } catch (IOException e) {
+      e.printStackTrace();
     }
 
     // Check for a valid response code.
@@ -215,6 +240,13 @@ public class DefaultHttpDataSource implements HttpDataSource {
         exception.initCause(new DataSourceException(DataSourceException.POSITION_OUT_OF_RANGE));
       }
       throw exception;
+    }
+
+    Map<String, List<String>> headerFields = connection.getHeaderFields();
+    List<String> uplynkHeader = headerFields.get(UPLYNK_PREFIX_HEADER);
+    if (uplynkHeader != null) {
+      uplynkPrefix = uplynkHeader.get(0);
+      //Log.d(TAG, "CHAD X-Uplynk-Prefix: " + uplynkPrefix);
     }
 
     // Check for a valid content type.
@@ -340,6 +372,10 @@ public class DefaultHttpDataSource implements HttpDataSource {
    */
   private HttpURLConnection makeConnection(DataSpec dataSpec) throws IOException {
     URL url = new URL(dataSpec.uri.toString());
+    // UPLYNK
+    if (url.toString().endsWith("uplynk.com/wv") && uplynkPrefix != null) {
+      url = new URL(uplynkPrefix + "/wv");
+    }
     byte[] postBody = dataSpec.postBody;
     long position = dataSpec.position;
     long length = dataSpec.length;
