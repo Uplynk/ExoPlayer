@@ -18,6 +18,7 @@ package com.google.android.exoplayer2.demo;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.Surface;
+
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.ExoPlayer;
@@ -26,7 +27,7 @@ import com.google.android.exoplayer2.RendererCapabilities;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.audio.AudioRendererEventListener;
 import com.google.android.exoplayer2.decoder.DecoderCounters;
-import com.google.android.exoplayer2.drm.DefaultDrmSessionManager;
+import com.google.android.exoplayer2.drm.UplynkDrmSessionManager;
 import com.google.android.exoplayer2.metadata.Metadata;
 import com.google.android.exoplayer2.metadata.MetadataRenderer;
 import com.google.android.exoplayer2.metadata.emsg.EventMessage;
@@ -47,6 +48,7 @@ import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.upstream.DataSpec;
 import com.google.android.exoplayer2.video.VideoRendererEventListener;
+
 import java.io.IOException;
 import java.text.NumberFormat;
 import java.util.Locale;
@@ -56,7 +58,7 @@ import java.util.Locale;
  */
 /* package */ final class EventLogger implements ExoPlayer.EventListener,
     AudioRendererEventListener, VideoRendererEventListener, AdaptiveMediaSourceEventListener,
-    ExtractorMediaSource.EventListener, DefaultDrmSessionManager.EventListener,
+    ExtractorMediaSource.EventListener, UplynkDrmSessionManager.EventListener,
     MetadataRenderer.Output {
 
   private static final String TAG = "EventLogger";

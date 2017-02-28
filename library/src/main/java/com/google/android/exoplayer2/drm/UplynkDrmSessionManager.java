@@ -24,10 +24,10 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.Message;
-import android.support.annotation.IntDef;
 import android.text.TextUtils;
 import android.util.Log;
 import android.util.Pair;
+
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.drm.DrmInitData.SchemeData;
 import com.google.android.exoplayer2.drm.ExoMediaDrm.KeyRequest;
@@ -36,18 +36,21 @@ import com.google.android.exoplayer2.drm.ExoMediaDrm.ProvisionRequest;
 import com.google.android.exoplayer2.extractor.mp4.PsshAtomUtil;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Util;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
+
+import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Map;
 import java.util.UUID;
+
+import static com.google.android.exoplayer2.drm.DrmSession.STATE_CLOSED;
+import static com.google.android.exoplayer2.drm.DrmSession.STATE_OPENED;
+import static com.google.android.exoplayer2.drm.DrmSession.STATE_OPENED_WITH_KEYS;
+import static com.google.android.exoplayer2.drm.DrmSession.STATE_OPENING;
 
 /**
  * A {@link DrmSessionManager} that supports playbacks using {@link MediaDrm}.
  */
 @TargetApi(18)
-public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSessionManager<T>,
-    DrmSession<T> {
+public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSessionManager<T> {
 
   /**
    * Listener of {@link UplynkDrmSessionManager} events.
@@ -83,26 +86,7 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
    */
   public static final String PLAYREADY_CUSTOM_DATA_KEY = "PRCustomData";
 
-  /** Determines the action to be done after a session acquired. */
-  @Retention(RetentionPolicy.SOURCE)
-  @IntDef({MODE_PLAYBACK, MODE_QUERY, MODE_DOWNLOAD, MODE_RELEASE})
-  public @interface Mode {}
-  /**
-   * Loads and refreshes (if necessary) a license for playback. Supports streaming and offline
-   * licenses.
-   */
-  public static final int MODE_PLAYBACK = 0;
-  /**
-   * Restores an offline license to allow its status to be queried. If the offline license is
-   * expired sets state to {@link #STATE_ERROR}.
-   */
-  public static final int MODE_QUERY = 1;
-  /** Downloads an offline license or renews an existing one. */
-  public static final int MODE_DOWNLOAD = 2;
-  /** Releases an existing offline license. */
-  public static final int MODE_RELEASE = 3;
-
-  private static final String TAG = "OfflineDrmSessionMngr";
+  private static final String TAG = "UplynkDrmSessionMgr";
 
   private static final int MSG_PROVISION = 0;
   private static final int MSG_KEYS = 1;
@@ -120,21 +104,9 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
   /* package */ MediaDrmHandler mediaDrmHandler;
   /* package */ PostResponseHandler postResponseHandler;
 
-  private Looper playbackLooper;
-  private HandlerThread requestHandlerThread;
-  private Handler postRequestHandler;
 
-  private int mode;
-  private int openCount;
-  private boolean provisioningInProgress;
-  @State
-  private int state;
-  private T mediaCrypto;
-  private DrmSessionException lastException;
-  private byte[] schemeInitData;
-  private String schemeMimeType;
-  private byte[] sessionId;
-  private byte[] offlineLicenseKeySetId;
+  private Looper playbackLooper;
+  private ArrayList<UplynkDrmSession> drmRequests;
 
   /**
    * Instantiates a new instance using the Widevine scheme.
@@ -219,9 +191,9 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
     this.optionalKeyRequestParameters = optionalKeyRequestParameters;
     this.eventHandler = eventHandler;
     this.eventListener = eventListener;
+    mediaDrm.setPropertyString("sessionSharing", "enable");
     mediaDrm.setOnEventListener(new MediaDrmEventListener());
-    state = STATE_CLOSED;
-    mode = MODE_PLAYBACK;
+    drmRequests = new ArrayList<>();
   }
 
   /**
@@ -272,214 +244,182 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
     mediaDrm.setPropertyByteArray(key, value);
   }
 
-  /**
-   * Sets the mode, which determines the role of sessions acquired from the instance. This must be
-   * called before {@link #acquireSession(Looper, DrmInitData)} is called.
-   *
-   * <p>By default, the mode is {@link #MODE_PLAYBACK} and a streaming license is requested when
-   * required.
-   *
-   * <p>{@code mode} must be one of these:
-   * <li>{@link #MODE_PLAYBACK}: If {@code offlineLicenseKeySetId} is null, a streaming license is
-   *     requested otherwise the offline license is restored.
-   * <li>{@link #MODE_QUERY}: {@code offlineLicenseKeySetId} can not be null. The offline license
-   *     is restored.
-   * <li>{@link #MODE_DOWNLOAD}: If {@code offlineLicenseKeySetId} is null, an offline license is
-   *     requested otherwise the offline license is renewed.
-   * <li>{@link #MODE_RELEASE}: {@code offlineLicenseKeySetId} can not be null. The offline license
-   *     is released.
-   *
-   * @param mode The mode to be set.
-   * @param offlineLicenseKeySetId The key set id of the license to be used with the given mode.
-   */
-  public void setMode(@Mode int mode, byte[] offlineLicenseKeySetId) {
-    Assertions.checkState(openCount == 0);
-    if (mode == MODE_QUERY || mode == MODE_RELEASE) {
-      Assertions.checkNotNull(offlineLicenseKeySetId);
-    }
-    this.mode = mode;
-    this.offlineLicenseKeySetId = offlineLicenseKeySetId;
-  }
+//  /**
+//   * Sets the mode, which determines the role of sessions acquired from the instance. This must be
+//   * called before {@link #acquireSession(Looper, DrmInitData)} is called.
+//   *
+//   * <p>By default, the mode is {@link #MODE_PLAYBACK} and a streaming license is requested when
+//   * required.
+//   *
+//   * <p>{@code mode} must be one of these:
+//   * <li>{@link #MODE_PLAYBACK}: If {@code offlineLicenseKeySetId} is null, a streaming license is
+//   *     requested otherwise the offline license is restored.
+//   * <li>{@link #MODE_QUERY}: {@code offlineLicenseKeySetId} can not be null. The offline license
+//   *     is restored.
+//   * <li>{@link #MODE_DOWNLOAD}: If {@code offlineLicenseKeySetId} is null, an offline license is
+//   *     requested otherwise the offline license is renewed.
+//   * <li>{@link #MODE_RELEASE}: {@code offlineLicenseKeySetId} can not be null. The offline license
+//   *     is released.
+//   *
+//   * @param mode The mode to be set.
+//   * @param offlineLicenseKeySetId The key set id of the license to be used with the given mode.
+//   */
+//  public void setMode(@Mode int mode, byte[] offlineLicenseKeySetId) {
+//    Assertions.checkState(openCount == 0);
+//    if (mode == MODE_QUERY || mode == MODE_RELEASE) {
+//      Assertions.checkNotNull(offlineLicenseKeySetId);
+//    }
+//    this.mode = mode;
+//    this.offlineLicenseKeySetId = offlineLicenseKeySetId;
+//  }
 
   // DrmSessionManager implementation.
 
   @Override
   public DrmSession<T> acquireSession(Looper playbackLooper, DrmInitData drmInitData) {
     Assertions.checkState(this.playbackLooper == null || this.playbackLooper == playbackLooper);
-    if (++openCount != 1) {
-      return this;
-    }
-
     if (this.playbackLooper == null) {
       this.playbackLooper = playbackLooper;
       mediaDrmHandler = new MediaDrmHandler(playbackLooper);
       postResponseHandler = new PostResponseHandler(playbackLooper);
     }
 
-    requestHandlerThread = new HandlerThread("DrmRequestHandler");
-    requestHandlerThread.start();
-    postRequestHandler = new PostRequestHandler(requestHandlerThread.getLooper());
+    UplynkDrmSession<T> newRequest = new UplynkDrmSession<>(mediaDrm);
+    drmRequests.add(newRequest);
+    newRequest.requestHandlerThread = new HandlerThread("DrmRequestHandler");
+    newRequest.requestHandlerThread.start();
+    newRequest.postRequestHandler = new PostRequestHandler(newRequest.requestHandlerThread.getLooper());
 
-    if (offlineLicenseKeySetId == null) {
+    if (newRequest.offlineLicenseKeySetId == null) {
       SchemeData schemeData = drmInitData.get(uuid);
       if (schemeData == null) {
-        onError(new IllegalStateException("Media does not support uuid: " + uuid));
-        return this;
+        onError(newRequest, new IllegalStateException("Media does not support uuid: " + uuid));
+        return newRequest;
       }
-      schemeInitData = schemeData.data;
-      schemeMimeType = schemeData.mimeType;
+      newRequest.schemeInitData = schemeData.data;
+      // TODO verify the mimeType
+      newRequest.schemeMimeType = schemeData.mimeType;
       if (Util.SDK_INT < 21) {
         // Prior to L the Widevine CDM required data to be extracted from the PSSH atom.
-        byte[] psshData = PsshAtomUtil.parseSchemeSpecificData(schemeInitData, C.WIDEVINE_UUID);
-        if (psshData == null) {
-          // Extraction failed. schemeData isn't a Widevine PSSH atom, so leave it unchanged.
-        } else {
-          schemeInitData = psshData;
+        byte[] psshData = PsshAtomUtil.parseSchemeSpecificData(newRequest.schemeInitData, C.WIDEVINE_UUID);
+        if (psshData != null) {
+          newRequest.schemeInitData = psshData;
         }
+        // else -- Extraction failed. schemeData isn't a Widevine PSSH atom, so leave it unchanged.
+
       }
     }
-    state = STATE_OPENING;
-    openInternal(true);
-    return this;
+    newRequest.state = STATE_OPENING;
+    openInternal(newRequest, true);
+    return newRequest;
   }
 
   @Override
   public void releaseSession(DrmSession<T> session) {
-    if (--openCount != 0) {
-      return;
+    UplynkDrmSession ulSession = (UplynkDrmSession) session;
+    drmRequests.remove(session);
+    if (drmRequests.isEmpty())
+    {
+      mediaDrmHandler.removeCallbacksAndMessages(null);
+      postResponseHandler.removeCallbacksAndMessages(null);
     }
-    state = STATE_CLOSED;
-    provisioningInProgress = false;
-    mediaDrmHandler.removeCallbacksAndMessages(null);
-    postResponseHandler.removeCallbacksAndMessages(null);
-    postRequestHandler.removeCallbacksAndMessages(null);
-    postRequestHandler = null;
-    requestHandlerThread.quit();
-    requestHandlerThread = null;
-    schemeInitData = null;
-    schemeMimeType = null;
-    mediaCrypto = null;
-    lastException = null;
-    if (sessionId != null) {
-      mediaDrm.closeSession(sessionId);
-      sessionId = null;
+
+    ulSession.state = STATE_CLOSED;
+    ulSession.provisioningInProgress = false;
+    ulSession.postRequestHandler.removeCallbacksAndMessages(null);
+    ulSession.postRequestHandler = null;
+    ulSession.requestHandlerThread.quit();
+    ulSession.requestHandlerThread = null;
+    ulSession.schemeInitData = null;
+    ulSession.schemeMimeType = null;
+    ulSession.mediaCrypto = null;
+    ulSession.lastException = null;
+    if (ulSession.sessionId != null) {
+      mediaDrm.closeSession(ulSession.sessionId);
+      ulSession.sessionId = null;
     }
-  }
-
-  // DrmSession implementation.
-
-  @Override
-  @State
-  public final int getState() {
-    return state;
-  }
-
-  @Override
-  public final T getMediaCrypto() {
-    if (state != STATE_OPENED && state != STATE_OPENED_WITH_KEYS) {
-      throw new IllegalStateException();
-    }
-    return mediaCrypto;
-  }
-
-  @Override
-  public boolean requiresSecureDecoderComponent(String mimeType) {
-    if (state != STATE_OPENED && state != STATE_OPENED_WITH_KEYS) {
-      throw new IllegalStateException();
-    }
-    return mediaCrypto.requiresSecureDecoderComponent(mimeType);
-  }
-
-  @Override
-  public final DrmSessionException getError() {
-    return state == STATE_ERROR ? lastException : null;
-  }
-
-  @Override
-  public Map<String, String> queryKeyStatus() {
-    // User may call this method rightfully even if state == STATE_ERROR. So only check if there is
-    // a sessionId
-    if (sessionId == null) {
-      throw new IllegalStateException();
-    }
-    return mediaDrm.queryKeyStatus(sessionId);
-  }
-
-  @Override
-  public byte[] getOfflineLicenseKeySetId() {
-    return offlineLicenseKeySetId;
   }
 
   // Internal methods.
 
-  private void openInternal(boolean allowProvisioning) {
+  private void openInternal(UplynkDrmSession session, boolean allowProvisioning) {
     try {
-      sessionId = mediaDrm.openSession();
-      mediaCrypto = mediaDrm.createMediaCrypto(uuid, sessionId);
-      state = STATE_OPENED;
-      doLicense();
+      session.sessionId = mediaDrm.openSession();
+      session.mediaCrypto = mediaDrm.createMediaCrypto(uuid, session.sessionId);
+      session.state = STATE_OPENED;
+      doLicense(session);
     } catch (NotProvisionedException e) {
       if (allowProvisioning) {
-        postProvisionRequest();
+        postProvisionRequest(session);
       } else {
-        onError(e);
+        onError(session, e);
       }
     } catch (Exception e) {
-      onError(e);
+      onError(session, e);
     }
   }
 
-  private void postProvisionRequest() {
-    if (provisioningInProgress) {
+  private void postProvisionRequest(UplynkDrmSession session) {
+    if (session.provisioningInProgress) {
       return;
     }
-    provisioningInProgress = true;
+    session.provisioningInProgress = true;
     ProvisionRequest request = mediaDrm.getProvisionRequest();
-    postRequestHandler.obtainMessage(MSG_PROVISION, request).sendToTarget();
+    session.postRequestHandler.obtainMessage(MSG_PROVISION, request).sendToTarget();
   }
 
   private void onProvisionResponse(Object response) {
-    provisioningInProgress = false;
-    if (state != STATE_OPENING && state != STATE_OPENED && state != STATE_OPENED_WITH_KEYS) {
+    UplynkDrmSession session = null;
+    for (UplynkDrmSession t : drmRequests)
+    {
+      if (t.provisioningInProgress) {
+        session = t;
+        break;
+      }
+    }
+    if (session == null) return;
+
+    session.provisioningInProgress = false;
+    if (session.state != STATE_OPENING && session.state != STATE_OPENED && session.state != STATE_OPENED_WITH_KEYS) {
       // This event is stale.
       return;
     }
 
     if (response instanceof Exception) {
-      onError((Exception) response);
+      onError(session, (Exception) response);
       return;
     }
 
     try {
       mediaDrm.provideProvisionResponse((byte[]) response);
-      if (state == STATE_OPENING) {
-        openInternal(false);
+      if (session.state == STATE_OPENING) {
+        openInternal(session, false);
       } else {
-        doLicense();
+        doLicense(session);
       }
     } catch (DeniedByServerException e) {
-      onError(e);
+      onError(session, e);
     }
   }
 
-  private void doLicense() {
-    switch (mode) {
-      case MODE_PLAYBACK:
-      case MODE_QUERY:
-        if (offlineLicenseKeySetId == null) {
-          postKeyRequest(sessionId, MediaDrm.KEY_TYPE_STREAMING);
+  private void doLicense(UplynkDrmSession session) {
+    switch (session.mode) {
+      case UplynkDrmSession.MODE_PLAYBACK:
+      case UplynkDrmSession.MODE_QUERY:
+        if (session.offlineLicenseKeySetId == null) {
+          postKeyRequest(session, MediaDrm.KEY_TYPE_STREAMING);
         } else {
           if (restoreKeys()) {
-            long licenseDurationRemainingSec = getLicenseDurationRemainingSec();
-            if (mode == MODE_PLAYBACK
+            long licenseDurationRemainingSec = getLicenseDurationRemainingSec(session);
+            if (session.mode == UplynkDrmSession.MODE_PLAYBACK
                 && licenseDurationRemainingSec <= MAX_LICENSE_DURATION_TO_RENEW) {
               Log.d(TAG, "Offline license has expired or will expire soon. "
                   + "Remaining seconds: " + licenseDurationRemainingSec);
-              postKeyRequest(sessionId, MediaDrm.KEY_TYPE_OFFLINE);
+              postKeyRequest(session, MediaDrm.KEY_TYPE_OFFLINE);
             } else if (licenseDurationRemainingSec <= 0) {
-              onError(new KeysExpiredException());
+              onError(session, new KeysExpiredException());
             } else {
-              state = STATE_OPENED_WITH_KEYS;
+              session.state = STATE_OPENED_WITH_KEYS;
               if (eventHandler != null && eventListener != null) {
                 eventHandler.post(new Runnable() {
                   @Override
@@ -492,67 +432,80 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
           }
         }
         break;
-      case MODE_DOWNLOAD:
-        if (offlineLicenseKeySetId == null) {
-          postKeyRequest(sessionId, MediaDrm.KEY_TYPE_OFFLINE);
+      case UplynkDrmSession.MODE_DOWNLOAD:
+        if (session.offlineLicenseKeySetId == null) {
+          postKeyRequest(session, MediaDrm.KEY_TYPE_OFFLINE);
         } else {
           // Renew
           if (restoreKeys()) {
-            postKeyRequest(sessionId, MediaDrm.KEY_TYPE_OFFLINE);
+            postKeyRequest(session, MediaDrm.KEY_TYPE_OFFLINE);
           }
         }
         break;
-      case MODE_RELEASE:
+      case UplynkDrmSession.MODE_RELEASE:
         if (restoreKeys()) {
-          postKeyRequest(offlineLicenseKeySetId, MediaDrm.KEY_TYPE_RELEASE);
+          postKeyRequest(session, MediaDrm.KEY_TYPE_RELEASE);
         }
         break;
     }
   }
 
   private boolean restoreKeys() {
-    try {
-      mediaDrm.restoreKeys(sessionId, offlineLicenseKeySetId);
-      return true;
-    } catch (Exception e) {
-      Log.e(TAG, "Error trying to restore Widevine keys.", e);
-      onError(e);
+    boolean retVal = false;
+    for (UplynkDrmSession session : drmRequests) {
+      try {
+        mediaDrm.restoreKeys(session.sessionId, session.offlineLicenseKeySetId);
+        retVal = true;
+      } catch (Exception e) {
+        Log.e(TAG, "Error trying to restore Widevine keys.", e);
+        onError(session, e);
+      }
     }
-    return false;
+    return retVal;
   }
 
-  private long getLicenseDurationRemainingSec() {
+  private long getLicenseDurationRemainingSec(UplynkDrmSession session) {
     if (!C.WIDEVINE_UUID.equals(uuid)) {
       return Long.MAX_VALUE;
     }
-    Pair<Long, Long> pair = WidevineUtil.getLicenseDurationRemainingSec(this);
+    Pair<Long, Long> pair = WidevineUtil.getLicenseDurationRemainingSec(session);
     return Math.min(pair.first, pair.second);
   }
 
-  private void postKeyRequest(byte[] scope, int keyType) {
+  private void postKeyRequest(UplynkDrmSession session, int keyType) {
     try {
-      KeyRequest keyRequest = mediaDrm.getKeyRequest(scope, schemeInitData, schemeMimeType, keyType,
+      KeyRequest keyRequest;
+      if (keyType == MediaDrm.KEY_TYPE_RELEASE)
+        keyRequest = mediaDrm.getKeyRequest(session.offlineLicenseKeySetId, session.schemeInitData, session.schemeMimeType, keyType,
           optionalKeyRequestParameters);
-      postRequestHandler.obtainMessage(MSG_KEYS, keyRequest).sendToTarget();
+      else
+         keyRequest = mediaDrm.getKeyRequest(session.sessionId, session.schemeInitData, session.schemeMimeType, keyType,
+                optionalKeyRequestParameters);
+      session.postRequestHandler.obtainMessage(MSG_KEYS, keyRequest).sendToTarget();
     } catch (Exception e) {
-      onKeysError(e);
+      onKeysError(session, e);
     }
   }
 
   private void onKeyResponse(Object response) {
-    if (state != STATE_OPENED && state != STATE_OPENED_WITH_KEYS) {
-      // This event is stale.
-      return;
+    UplynkDrmSession session = null;
+    for (UplynkDrmSession t : drmRequests)
+    {
+      if (t.state == STATE_OPENED) {
+        session = t;
+        break;
+      }
     }
+    if (session == null) return;
 
     if (response instanceof Exception) {
-      onKeysError((Exception) response);
+      onKeysError(session, (Exception) response);
       return;
     }
 
     try {
-      if (mode == MODE_RELEASE) {
-        mediaDrm.provideKeyResponse(offlineLicenseKeySetId, (byte[]) response);
+      if (session.mode == UplynkDrmSession.MODE_RELEASE) {
+        mediaDrm.provideKeyResponse(session.offlineLicenseKeySetId, (byte[]) response);
         if (eventHandler != null && eventListener != null) {
           eventHandler.post(new Runnable() {
             @Override
@@ -562,12 +515,12 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
           });
         }
       } else {
-        byte[] keySetId = mediaDrm.provideKeyResponse(sessionId, (byte[]) response);
-        if ((mode == MODE_DOWNLOAD || (mode == MODE_PLAYBACK && offlineLicenseKeySetId != null))
+        byte[] keySetId = mediaDrm.provideKeyResponse(session.sessionId, (byte[]) response);
+        if ((session.mode == UplynkDrmSession.MODE_DOWNLOAD || (session.mode == UplynkDrmSession.MODE_PLAYBACK && session.offlineLicenseKeySetId != null))
             && keySetId != null && keySetId.length != 0) {
-          offlineLicenseKeySetId = keySetId;
+          session.offlineLicenseKeySetId = keySetId;
         }
-        state = STATE_OPENED_WITH_KEYS;
+        session.state = STATE_OPENED_WITH_KEYS;
         if (eventHandler != null && eventListener != null) {
           eventHandler.post(new Runnable() {
             @Override
@@ -578,20 +531,20 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
         }
       }
     } catch (Exception e) {
-      onKeysError(e);
+      onKeysError(session, e);
     }
   }
 
-  private void onKeysError(Exception e) {
+  private void onKeysError(UplynkDrmSession session, Exception e) {
     if (e instanceof NotProvisionedException) {
-      postProvisionRequest();
+      postProvisionRequest(session);
     } else {
-      onError(e);
+      onError(session, e);
     }
   }
 
-  private void onError(final Exception e) {
-    lastException = new DrmSessionException(e);
+  private void onError(UplynkDrmSession session, final Exception e) {
+    session.lastException = new UplynkDrmSession.DrmSessionException(e);
     if (eventHandler != null && eventListener != null) {
       eventHandler.post(new Runnable() {
         @Override
@@ -600,8 +553,8 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
         }
       });
     }
-    if (state != STATE_OPENED_WITH_KEYS) {
-      state = STATE_ERROR;
+    if (session.state != STATE_OPENED_WITH_KEYS) {
+      session.state = UplynkDrmSession.STATE_ERROR;
     }
   }
 
@@ -615,25 +568,32 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
     @SuppressWarnings("deprecation")
     @Override
     public void handleMessage(Message msg) {
-      if (openCount == 0 || (state != STATE_OPENED && state != STATE_OPENED_WITH_KEYS)) {
-        return;
+      UplynkDrmSession session = null;
+      for (UplynkDrmSession t : drmRequests)
+      {
+        if (t.state == STATE_OPENED || t.state == STATE_OPENED_WITH_KEYS) {
+          session = t;
+          break;
+        }
       }
+
+      if (session == null) return;
       switch (msg.what) {
         case MediaDrm.EVENT_KEY_REQUIRED:
-          doLicense();
+          doLicense(session);
           break;
         case MediaDrm.EVENT_KEY_EXPIRED:
           // When an already expired key is loaded MediaDrm sends this event immediately. Ignore
           // this event if the state isn't STATE_OPENED_WITH_KEYS yet which means we're still
           // waiting for key response.
-          if (state == STATE_OPENED_WITH_KEYS) {
-            state = STATE_OPENED;
-            onError(new KeysExpiredException());
+          if (session.state == STATE_OPENED_WITH_KEYS) {
+            session.state = STATE_OPENED;
+            onError(session, new KeysExpiredException());
           }
           break;
         case MediaDrm.EVENT_PROVISION_REQUIRED:
-          state = STATE_OPENED;
-          postProvisionRequest();
+          session.state = STATE_OPENED;
+          postProvisionRequest(session);
           break;
       }
     }
@@ -645,8 +605,12 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
     @Override
     public void onEvent(ExoMediaDrm<? extends T> md, byte[] sessionId, int event, int extra,
         byte[] data) {
-      if (mode == MODE_PLAYBACK) {
-        mediaDrmHandler.sendEmptyMessage(event);
+      for (UplynkDrmSession t : drmRequests)
+      {
+        if (t.mode == UplynkDrmSession.MODE_PLAYBACK ) {
+          mediaDrmHandler.sendEmptyMessage(event);
+          break;
+        }
       }
     }
 
