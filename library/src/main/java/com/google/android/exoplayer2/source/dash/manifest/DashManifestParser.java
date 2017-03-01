@@ -20,6 +20,7 @@ import android.text.TextUtils;
 import android.util.Base64;
 import android.util.Log;
 import android.util.Pair;
+
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.ParserException;
@@ -36,6 +37,12 @@ import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.UriUtil;
 import com.google.android.exoplayer2.util.Util;
 import com.google.android.exoplayer2.util.XmlPullParserUtil;
+
+import org.xml.sax.helpers.DefaultHandler;
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserException;
+import org.xmlpull.v1.XmlPullParserFactory;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -43,10 +50,6 @@ import java.util.List;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import org.xml.sax.helpers.DefaultHandler;
-import org.xmlpull.v1.XmlPullParser;
-import org.xmlpull.v1.XmlPullParserException;
-import org.xmlpull.v1.XmlPullParserFactory;
 
 /**
  * A parser of media presentation description files.
@@ -253,7 +256,7 @@ public class DashManifestParser extends DefaultHandler
           seenFirstBaseUrl = true;
         }
       } else if (XmlPullParserUtil.isStartTag(xpp, "ContentProtection")) {
-        SchemeData contentProtection = parseContentProtection(xpp);
+        SchemeData contentProtection = parseContentProtection(xpp, mimeType);
         if (contentProtection != null) {
           drmSchemeDatas.add(contentProtection);
         }
@@ -328,12 +331,13 @@ public class DashManifestParser extends DefaultHandler
    * Parses a ContentProtection element.
    *
    * @param xpp The parser from which to read.
+   * @param mimeType
    * @throws XmlPullParserException If an error occurs parsing the element.
    * @throws IOException If an error occurs reading the element.
    * @return {@link SchemeData} parsed from the ContentProtection element, or null if the element is
    *     unsupported.
    */
-  protected SchemeData parseContentProtection(XmlPullParser xpp) throws XmlPullParserException,
+  protected SchemeData parseContentProtection(XmlPullParser xpp, String mimeType) throws XmlPullParserException,
       IOException {
     byte[] data = null;
     UUID uuid = null;
@@ -354,7 +358,7 @@ public class DashManifestParser extends DefaultHandler
     if (!seenPsshElement) {
       return null;
     } else if (uuid != null) {
-      return new SchemeData(uuid, MimeTypes.VIDEO_MP4, data, requiresSecureDecoder);
+      return new SchemeData(uuid, mimeType, data, requiresSecureDecoder);
     } else {
       Log.w(TAG, "Skipped unsupported ContentProtection element");
       return null;
@@ -456,7 +460,7 @@ public class DashManifestParser extends DefaultHandler
       } else if (XmlPullParserUtil.isStartTag(xpp, "SegmentTemplate")) {
         segmentBase = parseSegmentTemplate(xpp, (SegmentTemplate) segmentBase);
       } else if (XmlPullParserUtil.isStartTag(xpp, "ContentProtection")) {
-        SchemeData contentProtection = parseContentProtection(xpp);
+        SchemeData contentProtection = parseContentProtection(xpp, mimeType);
         if (contentProtection != null) {
           drmSchemeDatas.add(contentProtection);
         }
