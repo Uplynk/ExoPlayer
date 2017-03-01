@@ -37,9 +37,9 @@ import com.google.android.exoplayer2.extractor.mp4.PsshAtomUtil;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Util;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.UUID;
+import java.util.Vector;
 
 import static com.google.android.exoplayer2.drm.DrmSession.STATE_CLOSED;
 import static com.google.android.exoplayer2.drm.DrmSession.STATE_OPENED;
@@ -106,7 +106,7 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
 
 
   private Looper playbackLooper;
-  private ArrayList<UplynkDrmSession> drmRequests;
+  private Vector<UplynkDrmSession> drmRequests;
 
   /**
    * Instantiates a new instance using the Widevine scheme.
@@ -193,7 +193,7 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
     this.eventListener = eventListener;
     mediaDrm.setPropertyString("sessionSharing", "enable");
     mediaDrm.setOnEventListener(new MediaDrmEventListener());
-    drmRequests = new ArrayList<>();
+    drmRequests = new Vector<>();
   }
 
   /**
@@ -488,50 +488,51 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
   }
 
   private void onKeyResponse(Object response) {
-    UplynkDrmSession session = null;
-    for (UplynkDrmSession t : drmRequests)
-    {
-      if (t.state == STATE_OPENED) {
-        session = t;
-        break;
-      }
-    }
-    if (session == null) return;
-
-    if (response instanceof Exception) {
-      onKeysError(session, (Exception) response);
-      return;
-    }
-
-    try {
-      if (session.mode == UplynkDrmSession.MODE_RELEASE) {
-        mediaDrm.provideKeyResponse(session.offlineLicenseKeySetId, (byte[]) response);
-        if (eventHandler != null && eventListener != null) {
-          eventHandler.post(new Runnable() {
-            @Override
-            public void run() {
-              eventListener.onDrmKeysRemoved();
-            }
-          });
-        }
-      } else {
-        byte[] keySetId = mediaDrm.provideKeyResponse(session.sessionId, (byte[]) response);
-        if ((session.mode == UplynkDrmSession.MODE_DOWNLOAD || (session.mode == UplynkDrmSession.MODE_PLAYBACK && session.offlineLicenseKeySetId != null))
-            && keySetId != null && keySetId.length != 0) {
-          session.offlineLicenseKeySetId = keySetId;
-        }
-        session.state = STATE_OPENED_WITH_KEYS;
-        if (eventHandler != null && eventListener != null) {
-          eventHandler.post(new Runnable() {
-            @Override
-            public void run() {
-              eventListener.onDrmKeysLoaded();
-            }
-          });
+    synchronized (this) {
+      UplynkDrmSession session = null;
+      for (UplynkDrmSession t : drmRequests) {
+        if (t.state == STATE_OPENED) {
+          session = t;
+          break;
         }
       }
-    } catch (Exception e) {
-      onKeysError(session, e);
+      if (session == null) return;
+
+      if (response instanceof Exception) {
+        onKeysError(session, (Exception) response);
+        return;
+      }
+
+      try {
+        if (session.mode == UplynkDrmSession.MODE_RELEASE) {
+          mediaDrm.provideKeyResponse(session.offlineLicenseKeySetId, (byte[]) response);
+          if (eventHandler != null && eventListener != null) {
+            eventHandler.post(new Runnable() {
+              @Override
+              public void run() {
+                eventListener.onDrmKeysRemoved();
+              }
+            });
+          }
+        } else {
+          byte[] keySetId = mediaDrm.provideKeyResponse(session.sessionId, (byte[]) response);
+          if ((session.mode == UplynkDrmSession.MODE_DOWNLOAD || (session.mode == UplynkDrmSession.MODE_PLAYBACK && session.offlineLicenseKeySetId != null))
+                  && keySetId != null && keySetId.length != 0) {
+            session.offlineLicenseKeySetId = keySetId;
+          }
+          session.state = STATE_OPENED_WITH_KEYS;
+          if (eventHandler != null && eventListener != null) {
+            eventHandler.post(new Runnable() {
+              @Override
+              public void run() {
+                eventListener.onDrmKeysLoaded();
+              }
+            });
+          }
+        }
+      } catch (Exception e) {
+        onKeysError(session, e);
+      }
     }
   }
 
