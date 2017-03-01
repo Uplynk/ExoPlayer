@@ -20,6 +20,7 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.drm.UplynkServerInfo;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Predicate;
 import com.google.android.exoplayer2.util.Util;
@@ -87,8 +88,7 @@ public class DefaultHttpDataSource implements HttpDataSource {
   private long bytesSkipped;
   private long bytesRead;
 
-  static final String UPLYNK_PREFIX_HEADER = "X-Uplynk-Prefix";
-  static private String uplynkPrefix;
+  private static final String UPLYNK_PREFIX_HEADER = "X-Uplynk-Prefix";
 
   /**
    * @param userAgent The User-Agent string that should be used.
@@ -214,9 +214,6 @@ public class DefaultHttpDataSource implements HttpDataSource {
     // UPLYNK -- check error text returned
     try {
       String server = dataSpec.uri.toString();
-      if (server.endsWith("uplynk.com/wv") && uplynkPrefix != null) {
-        server = uplynkPrefix + "/wv";
-      }
       if (dataSpec.uri.toString().endsWith("uplynk.com/wv"))
         Log.e(TAG, "CHAD open()'d: " + server + " got response " + Integer.toString(responseCode));
 
@@ -245,8 +242,7 @@ public class DefaultHttpDataSource implements HttpDataSource {
     Map<String, List<String>> headerFields = connection.getHeaderFields();
     List<String> uplynkHeader = headerFields.get(UPLYNK_PREFIX_HEADER);
     if (uplynkHeader != null) {
-      uplynkPrefix = uplynkHeader.get(0);
-      //Log.d(TAG, "CHAD X-Uplynk-Prefix: " + uplynkPrefix);
+      UplynkServerInfo.serverPrefix = uplynkHeader.get(0);
     }
 
     // Check for a valid content type.
@@ -372,10 +368,6 @@ public class DefaultHttpDataSource implements HttpDataSource {
    */
   private HttpURLConnection makeConnection(DataSpec dataSpec) throws IOException {
     URL url = new URL(dataSpec.uri.toString());
-    // UPLYNK
-    if (url.toString().endsWith("uplynk.com/wv") && uplynkPrefix != null) {
-      url = new URL(uplynkPrefix + "/wv");
-    }
     byte[] postBody = dataSpec.postBody;
     long position = dataSpec.position;
     long length = dataSpec.length;

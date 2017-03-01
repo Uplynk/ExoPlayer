@@ -80,6 +80,10 @@ public final class HttpMediaDrmCallback implements MediaDrmCallback {
     if (TextUtils.isEmpty(url)) {
       url = defaultUrl;
     }
+    // UPLYNK
+    if (url.equals("https://content.uplynk.com/wv")) {
+      url = UplynkServerInfo.getWidevineURL();
+    }
     Map<String, String> requestProperties = new HashMap<>();
     requestProperties.put("Content-Type", "application/octet-stream");
     if (C.PLAYREADY_UUID.equals(uuid)) {
