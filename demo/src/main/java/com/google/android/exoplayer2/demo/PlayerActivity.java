@@ -357,6 +357,8 @@ public class PlayerActivity extends Activity implements OnClickListener, ExoPlay
     }
     HttpMediaDrmCallback drmCallback = new HttpMediaDrmCallback(licenseUrl,
         buildHttpDataSourceFactory(false), keyRequestProperties);
+//    return new DefaultDrmSessionManager<>(uuid,
+//            FrameworkMediaDrm.newInstance(uuid), drmCallback, null, mainHandler, eventLogger);
     return new UplynkDrmSessionManager<>(uuid,
         FrameworkMediaDrm.newInstance(uuid), drmCallback, null, mainHandler, eventLogger);
   }

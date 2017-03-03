@@ -58,7 +58,11 @@ import java.util.Locale;
  */
 /* package */ final class EventLogger implements ExoPlayer.EventListener,
     AudioRendererEventListener, VideoRendererEventListener, AdaptiveMediaSourceEventListener,
-    ExtractorMediaSource.EventListener, UplynkDrmSessionManager.EventListener,
+    ExtractorMediaSource.EventListener,
+//
+//        DefaultDrmSessionManager.EventListener,
+        UplynkDrmSessionManager.EventListener,
+//
     MetadataRenderer.Output {
 
   private static final String TAG = "EventLogger";
