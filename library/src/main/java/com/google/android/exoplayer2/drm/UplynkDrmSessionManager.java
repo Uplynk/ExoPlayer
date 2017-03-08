@@ -42,7 +42,6 @@ import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.google.android.exoplayer2.drm.DrmSession.STATE_CLOSED;
 import static com.google.android.exoplayer2.drm.DrmSession.STATE_OPENED;
@@ -106,7 +105,6 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
 
     private Looper playbackLooper;
     private ArrayList<UplynkDrmSession<T>> drmRequests;
-    private AtomicBoolean provisioningInProgress;
 
     /**
      * Determines the action to be done after a session acquired.
@@ -135,12 +133,13 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
      */
     public static final int MODE_RELEASE = 3;
 
-    int mode;
+    private boolean provisioningInProgress;
+    private int mode;
     // For the next request (via setMode())
     private byte[] nextOfflineLicenseKeySetId;
     // For the current request
-    byte[] schemeInitData;
-    String schemeMimeType;
+    private byte[] schemeInitData;
+    private String schemeMimeType;
 
     /**
      * Instantiates a new instance using the Widevine scheme.
@@ -228,7 +227,7 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
         mediaDrm.setPropertyString("sessionSharing", "enable");
         mediaDrm.setOnEventListener(new MediaDrmEventListener());
         drmRequests = new ArrayList<>();
-        provisioningInProgress = new AtomicBoolean(false);
+        provisioningInProgress = false;
         mode = MODE_PLAYBACK;
         nextOfflineLicenseKeySetId = null;
         schemeInitData = null;
@@ -372,6 +371,7 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
 
         schemeInitData = null;
         schemeMimeType = null;
+        provisioningInProgress = false;
     }
 
     // Internal methods.
@@ -394,19 +394,23 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
     }
 
     private void postProvisionRequest(UplynkDrmSession session) {
+        if (provisioningInProgress) {
+            return;
+        }
+
         Log.i(TAG, "Provisioning being requested");
-        provisioningInProgress.set(true);
+        provisioningInProgress = true;
         ProvisionRequest request = mediaDrm.getProvisionRequest();
         try {
             byte[] response = callback.executeProvisionRequest(uuid, request);
-            onProvisionResponse(response);
+            onProvisionResponse(session, response);
         } catch (Exception e) {
             onError(session, e);
         }
     }
 
-    private void onProvisionResponse(byte[] response) {
-        UplynkDrmSession session = drmRequests.get(drmRequests.size() - 1);
+    private void onProvisionResponse(UplynkDrmSession session, byte[] response) {
+        provisioningInProgress = false;
         if (session.state != STATE_OPENING && session.state != STATE_OPENED && session.state != STATE_OPENED_WITH_KEYS) {
             // This event is stale.
             return;
@@ -414,15 +418,16 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
 
         try {
             mediaDrm.provideProvisionResponse(response);
+            Log.i(TAG, "Provisioning done!");
             if (session.state == STATE_OPENING) {
                 openInternal(session, false);
             } else {
                 doLicense(session);
             }
-        } catch (DeniedByServerException e) {
+        }
+        catch (DeniedByServerException e) {
             onError(session, e);
         }
-        provisioningInProgress.set(false);
     }
 
     private void doLicense(UplynkDrmSession session) {
@@ -504,9 +509,9 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
             else
                 keyRequest = mediaDrm.getKeyRequest(session.sessionId, schemeInitData, schemeMimeType, keyType,
                         optionalKeyRequestParameters);
-            Log.d(TAG, "KeyRequest " + schemeMimeType);
+            Log.d(TAG, "KeyRequest " + schemeMimeType + " Session: " + sessionIdToString(session.sessionId));
             Object response = callback.executeKeyRequest(uuid, keyRequest);
-            onKeyResponse(response);
+            onKeyResponse(session, response);
             schemeInitData = null;
             schemeMimeType = null;
         } catch (Exception e) {
@@ -514,8 +519,17 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
         }
     }
 
-    private void onKeyResponse(Object response) {
-        UplynkDrmSession session = drmRequests.get(drmRequests.size() - 1);
+    private String sessionIdToString(byte[] sessionId)
+    {
+        String stringVal = "0x";
+        for (byte b : sessionId)
+        {
+            stringVal += String.format("%X ", b);
+        }
+        return stringVal;
+    }
+
+    private void onKeyResponse(UplynkDrmSession session, Object response) {
         if (session == null || (session.state != STATE_OPENED && session.state != STATE_OPENED_WITH_KEYS)) {
             // This event is stale.
             return;
@@ -538,7 +552,7 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
                     });
                 }
             } else {
-                Log.d(TAG, "KeyResponse " + schemeMimeType);
+                Log.d(TAG, "KeyResponse " + schemeMimeType + " Session: " + sessionIdToString(session.sessionId));
                 byte[] keySetId;
                 keySetId = mediaDrm.provideKeyResponse(session.sessionId, (byte[]) response);
                 if ((mode == MODE_DOWNLOAD || (mode == MODE_PLAYBACK && session.offlineLicenseKeySetId != null))
@@ -594,7 +608,6 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
             super(looper);
         }
 
-        @SuppressWarnings("deprecation")
         @Override
         public void handleMessage(Message msg) {
 
@@ -613,9 +626,8 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
                                 onError(session, new KeysExpiredException());
                             }
                             break;
-                        case MediaDrm.EVENT_PROVISION_REQUIRED:
-                            session.state = STATE_OPENED;
-                            postProvisionRequest(session);
+                        // MediaDrm.EVENT_PROVISION_REQUIRED is deprecated. Provisioning is signaled by NotHandledException instead
+                        default:
                             break;
                     }
                 }
@@ -625,13 +637,12 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
 
     private class MediaDrmEventListener implements OnEventListener<T> {
 
+        @SuppressWarnings("deprecation")
         @Override
         public void onEvent(ExoMediaDrm<? extends T> md, byte[] sessionId, int event, int extra,
                             byte[] data) {
             if (mode != MODE_PLAYBACK) return;
-            for (UplynkDrmSession ignored : drmRequests) {
-                mediaDrmHandler.sendEmptyMessage(event);
-            }
+            mediaDrmHandler.sendEmptyMessage(event);
         }
 
     }
