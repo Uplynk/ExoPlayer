@@ -99,10 +99,8 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
 
     /* package */ final MediaDrmCallback callback;
     /* package */ final UUID uuid;
-
     /* package */ MediaDrmHandler mediaDrmHandler;
-
-
+    
     private Looper playbackLooper;
     private ArrayList<UplynkDrmSession<T>> drmRequests;
 
@@ -137,9 +135,6 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
     private int mode;
     // For the next request (via setMode())
     private byte[] nextOfflineLicenseKeySetId;
-    // For the current request
-    private byte[] schemeInitData;
-    private String schemeMimeType;
 
     /**
      * Instantiates a new instance using the Widevine scheme.
@@ -230,8 +225,6 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
         provisioningInProgress = false;
         mode = MODE_PLAYBACK;
         nextOfflineLicenseKeySetId = null;
-        schemeInitData = null;
-        schemeMimeType = "";
 
     }
 
@@ -335,13 +328,13 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
                 onError(newRequest, new IllegalStateException("Media does not support uuid: " + uuid));
                 return newRequest;
             }
-            schemeInitData = schemeData.data;
-            schemeMimeType = schemeData.mimeType;
+            newRequest.schemeInitData = schemeData.data;
+            newRequest.schemeMimeType = schemeData.mimeType;
             if (Util.SDK_INT < 21) {
                 // Prior to L the Widevine CDM required data to be extracted from the PSSH atom.
-                byte[] psshData = PsshAtomUtil.parseSchemeSpecificData(schemeInitData, C.WIDEVINE_UUID);
+                byte[] psshData = PsshAtomUtil.parseSchemeSpecificData(newRequest.schemeInitData, C.WIDEVINE_UUID);
                 if (psshData != null) {
-                    schemeInitData = psshData;
+                    newRequest.schemeInitData = psshData;
                 }
                 // else -- Extraction failed. schemeData isn't a Widevine PSSH atom, so leave it unchanged.
 
@@ -364,13 +357,13 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
         ulSession.state = STATE_CLOSED;
         ulSession.mediaCrypto = null;
         ulSession.lastException = null;
+        ulSession.schemeInitData = null;
+        ulSession.schemeMimeType = null;
         if (ulSession.sessionId != null) {
             mediaDrm.closeSession(ulSession.sessionId);
             ulSession.sessionId = null;
         }
 
-        schemeInitData = null;
-        schemeMimeType = null;
         provisioningInProgress = false;
     }
 
@@ -504,16 +497,14 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
         try {
             KeyRequest keyRequest;
             if (keyType == MediaDrm.KEY_TYPE_RELEASE)
-                keyRequest = mediaDrm.getKeyRequest(session.offlineLicenseKeySetId, schemeInitData, schemeMimeType, keyType,
+                keyRequest = mediaDrm.getKeyRequest(session.offlineLicenseKeySetId, session.schemeInitData, session.schemeMimeType, keyType,
                         optionalKeyRequestParameters);
             else
-                keyRequest = mediaDrm.getKeyRequest(session.sessionId, schemeInitData, schemeMimeType, keyType,
+                keyRequest = mediaDrm.getKeyRequest(session.sessionId, session.schemeInitData, session.schemeMimeType, keyType,
                         optionalKeyRequestParameters);
-            Log.d(TAG, "KeyRequest " + schemeMimeType + " Session: " + sessionIdToString(session.sessionId));
+            Log.d(TAG, "KeyRequest " + session.schemeMimeType + " Session: " + sessionIdToString(session.sessionId));
             Object response = callback.executeKeyRequest(uuid, keyRequest);
             onKeyResponse(session, response);
-            schemeInitData = null;
-            schemeMimeType = null;
         } catch (Exception e) {
             onKeysError(session, e);
         }
@@ -552,7 +543,7 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
                     });
                 }
             } else {
-                Log.d(TAG, "KeyResponse " + schemeMimeType + " Session: " + sessionIdToString(session.sessionId));
+                Log.d(TAG, "KeyResponse " + session.schemeMimeType + " Session: " + sessionIdToString(session.sessionId));
                 byte[] keySetId;
                 keySetId = mediaDrm.provideKeyResponse(session.sessionId, (byte[]) response);
                 if ((mode == MODE_DOWNLOAD || (mode == MODE_PLAYBACK && session.offlineLicenseKeySetId != null))

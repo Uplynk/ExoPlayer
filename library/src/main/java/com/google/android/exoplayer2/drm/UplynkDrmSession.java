@@ -8,6 +8,8 @@ public class UplynkDrmSession<T extends ExoMediaCrypto> implements DrmSession<T>
     int state;
     byte[] sessionId;
     byte[] offlineLicenseKeySetId;
+    byte[] schemeInitData;
+    String schemeMimeType;
     T mediaCrypto;
     DrmSessionException lastException;
     private final ExoMediaDrm<T> mediaDrm;
