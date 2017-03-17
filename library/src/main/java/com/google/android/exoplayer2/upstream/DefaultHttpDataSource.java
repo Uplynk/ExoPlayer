@@ -214,14 +214,14 @@ public class DefaultHttpDataSource implements HttpDataSource {
     // UPLYNK -- check error text returned
     try {
       String server = dataSpec.uri.toString();
-      if (dataSpec.uri.toString().endsWith("uplynk.com/wv"))
-        Log.e(TAG, "CHAD open()'d: " + server + " got response " + Integer.toString(responseCode));
+//      if (dataSpec.uri.toString().endsWith("uplynk.com/wv"))
+//        Log.e(TAG, "UPLYNK open()'d: " + server + " got response " + Integer.toString(responseCode));
 
       if (responseCode >= 400) {
         InputStream inputStream = connection.getErrorStream();
         Scanner s = new Scanner(inputStream).useDelimiter("\\A");
         String result = s.hasNext() ? s.next() : "";
-        Log.e(TAG, "CHAD Error POSTing to : " + server + " " + connection.getResponseCode() + " with error: " + result);
+        Log.e(TAG, "UPLYNK Error POSTing to : " + server + " " + connection.getResponseCode() + " with error: " + result);
       }
     } catch (IOException e) {
       e.printStackTrace();

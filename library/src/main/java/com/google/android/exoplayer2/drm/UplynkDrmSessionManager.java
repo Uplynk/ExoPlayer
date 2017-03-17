@@ -575,8 +575,8 @@ public class UplynkDrmSessionManager<T extends ExoMediaCrypto> implements DrmSes
 
     private void onError(UplynkDrmSession session, final Exception e) {
         // TODO remove 2 lines:
-        Log.e(TAG, "onError stacktrace:");
-        e.printStackTrace();
+//        Log.e(TAG, "onError stacktrace:");
+//        e.printStackTrace();
 
         session.lastException = new UplynkDrmSession.DrmSessionException(e);
         if (eventHandler != null && eventListener != null) {
