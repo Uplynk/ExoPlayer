@@ -906,7 +906,15 @@ public class DashManifestParser extends DefaultHandler
 
   protected static int parseInt(XmlPullParser xpp, String name, int defaultValue) {
     String value = xpp.getAttributeValue(null, name);
-    return value == null ? defaultValue : Integer.parseInt(value);
+    if( value == null )
+      return defaultValue;
+    boolean isHex = false;
+    boolean isDecimal = value.matches("^[0-9]+$");
+    if( !isDecimal )
+    {
+      isHex = value.matches("^[0-9a-fA-F]+$");
+    }
+    return Integer.parseInt(value, (isHex ? 16 : 10));
   }
 
   protected static long parseLong(XmlPullParser xpp, String name, long defaultValue) {
