@@ -28,6 +28,7 @@ import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.audio.AudioRendererEventListener;
 import com.google.android.exoplayer2.decoder.DecoderCounters;
 import com.google.android.exoplayer2.drm.DefaultDrmSessionManager;
+import com.google.android.exoplayer2.drm.UplynkDrmSessionManager;
 import com.google.android.exoplayer2.metadata.Metadata;
 import com.google.android.exoplayer2.metadata.MetadataOutput;
 import com.google.android.exoplayer2.metadata.emsg.EventMessage;
@@ -61,6 +62,7 @@ public class EventLogger
         VideoRendererEventListener,
         MediaSourceEventListener,
         AdsMediaSource.EventListener,
+        UplynkDrmSessionManager.EventListener,
         DefaultDrmSessionManager.EventListener {
 
   private static final String TAG = "EventLogger";
