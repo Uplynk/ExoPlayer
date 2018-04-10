@@ -1,5 +1,28 @@
 [
   {
+    "name": "Verizon Dash Simple VOD Playback Tests",
+    "samples": [
+      {
+        "name": "Single Period",
+        "uri": "https://content.uplynk.com/847859273a4b4a81959d8fea181672a4.mpd",
+        "drm_scheme": "widevine",
+        "drm_license_url": "https://content.uplynk.com/wv"
+      },
+      {
+        "name": "Multi Period - Encrypted / Unencrypted",
+        "uri": "https://content.uplynk.com/054225d59be2454fabdca3e96912d847.mpd?ad=cleardash",
+        "drm_scheme": "widevine",
+        "drm_license_url": "https://content.uplynk.com/wv"
+      },
+      {
+        "name": "Multi Period - Encrypted / Key Changes Between Periods",
+        "uri": "https://content.uplynk.com/054225d59be2454fabdca3e96912d847.mpd?ad=dash",
+        "drm_scheme": "widevine",
+        "drm_license_url": "https://content.uplynk.com/wv"
+      }
+    ]
+  },
+  {
     "name": "YouTube DASH",
     "samples": [
       {
